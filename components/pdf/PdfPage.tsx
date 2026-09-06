@@ -11,6 +11,7 @@ interface PdfPageProps {
   pageNumber: number;
   scale: number;
   onDimensionMeasured?: (pageNumber: number, width: number, height: number) => void;
+  isVisible: boolean; // controlled by parent intersection observer
 }
 
 export default function PdfPage({
@@ -18,28 +19,30 @@ export default function PdfPage({
   pageNumber,
   scale,
   onDimensionMeasured,
+  isVisible,
 }: PdfPageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const {
-    pageRotations,
-    initializedPages,
-    markPageInitialized,
-    addExtractedElements,
-  } = useEditorStore();
+  // Use ref for store actions to keep render effect stable
+  const initRef = useRef(
+    useEditorStore.getState().initializedPages
+  );
+  const markPageInitialized = useEditorStore((s) => s.markPageInitialized);
+  const addExtractedElements = useEditorStore((s) => s.addExtractedElements);
+  const rotationAngle = useEditorStore(
+    (s) => s.pageRotations[pageNumber] || 0
+  );
 
-  const rotationAngle = pageRotations[pageNumber] || 0;
-
-  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({
-    width: 0,
-    height: 0,
-  });
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [loading, setLoading] = useState(true);
   const [renderError, setRenderError] = useState<string | null>(null);
 
+  // ── Effect 1: Canvas rendering (triggered by visibility/scale/rotation) ──
   useEffect(() => {
+    if (!isVisible) return; // don't render off-screen pages
+
     let renderTask: pdfjsLib.RenderTask | null = null;
-    let isCancelled = false;
+    let cancelled = false;
 
     async function renderPage() {
       try {
@@ -47,163 +50,143 @@ export default function PdfPage({
         setRenderError(null);
 
         const page = await pdf.getPage(pageNumber);
+        if (cancelled) return;
 
-        if (isCancelled) return;
+        const dpr = window.devicePixelRatio || 1;
+        const viewport = page.getViewport({ scale: scale * dpr, rotation: rotationAngle });
+        const cssViewport = page.getViewport({ scale, rotation: rotationAngle });
 
-        const viewport = page.getViewport({ scale, rotation: rotationAngle });
+        const newDims = {
+          width: Math.round(cssViewport.width),
+          height: Math.round(cssViewport.height),
+        };
 
-        setDimensions({
-          width: viewport.width,
-          height: viewport.height,
-        });
+        setDimensions(newDims);
+        onDimensionMeasured?.(pageNumber, newDims.width, newDims.height);
 
-        onDimensionMeasured?.(pageNumber, viewport.width, viewport.height);
-
-        // Parse & Extract Original PDF Text Content if not yet initialized
-        if (!initializedPages[pageNumber]) {
-          try {
-            const textContent = await page.getTextContent();
-            const extracted: EditorElement[] = [];
-
-            for (const item of textContent.items as any[]) {
-              if (!item.str || !item.str.trim()) continue;
-
-              const tx = item.transform; // [scaleX, skewX, skewY, scaleY, pdfX, pdfY]
-              const pdfX = tx[4];
-              const pdfY = tx[5];
-              const fontHeight = Math.sqrt(tx[0] * tx[0] + tx[1] * tx[1]);
-
-              const [screenX, screenY] = viewport.convertToViewportPoint(pdfX, pdfY);
-
-              const computedFontSize = Math.max(11, Math.round(fontHeight * scale));
-              const width = item.width
-                ? Math.max(30, Math.round(item.width * scale))
-                : Math.max(40, item.str.length * computedFontSize * 0.55);
-              const height = Math.max(16, Math.round(computedFontSize * 1.35));
-
-              const topY = screenY - height;
-
-              extracted.push({
-                id: crypto.randomUUID(),
-                type: "text",
-                page: pageNumber,
-                position: {
-                  x: Math.max(0, Math.round(screenX)),
-                  y: Math.max(0, Math.round(topY)),
-                },
-                size: {
-                  width: Math.round(width),
-                  height: Math.round(height),
-                },
-                text: item.str,
-                fontSize: computedFontSize,
-                fontFamily: "Helvetica",
-                color: "#000000",
-                isOriginalPdfText: true,
-                originalText: item.str,
-                originalPosition: {
-                  x: Math.max(0, Math.round(screenX)),
-                  y: Math.max(0, Math.round(topY)),
-                },
-                originalSize: {
-                  width: Math.round(width),
-                  height: Math.round(height),
-                },
-              });
-            }
-
-            if (extracted.length > 0) {
-              addExtractedElements(extracted);
-            }
-            markPageInitialized(pageNumber);
-          } catch (textErr) {
-            console.warn(`Text extraction skipped for page ${pageNumber}:`, textErr);
-          }
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        if (isCancelled) return;
+        if (cancelled) return;
 
         const canvas = canvasRef.current;
         if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
 
-        const context = canvas.getContext("2d");
-        if (!context) return;
-
+        // Set physical canvas size (high-res for retina)
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
+        // Display at CSS size
+        canvas.style.width = `${newDims.width}px`;
+        canvas.style.height = `${newDims.height}px`;
 
-        renderTask = page.render({
-          canvas,
-          canvasContext: context,
-          viewport,
-        });
-
+        renderTask = page.render({ canvas, canvasContext: ctx, viewport });
         await renderTask.promise;
 
-        if (!isCancelled) {
+        if (!cancelled) setLoading(false);
+      } catch (err: any) {
+        if (err?.name !== "RenderingCancelledException" && !cancelled) {
+          setRenderError(err?.message ?? "Render failed");
           setLoading(false);
-        }
-      } catch (error: any) {
-        if (error?.name !== "RenderingCancelledException") {
-          console.error(`PAGE ${pageNumber} RENDER ERROR:`, error);
-          if (!isCancelled) {
-            setRenderError(error?.message || "Failed to render page");
-            setLoading(false);
-          }
         }
       }
     }
 
     renderPage();
-
     return () => {
-      isCancelled = true;
-      if (renderTask) {
-        renderTask.cancel();
-      }
+      cancelled = true;
+      renderTask?.cancel();
     };
-  }, [
-    pdf,
-    pageNumber,
-    scale,
-    rotationAngle,
-    onDimensionMeasured,
-    initializedPages,
-    markPageInitialized,
-    addExtractedElements,
-  ]);
+  }, [pdf, pageNumber, scale, rotationAngle, isVisible, onDimensionMeasured]);
+
+  // ── Effect 2: Text extraction — runs ONCE per page, independently ──
+  useEffect(() => {
+    // Stable ref check avoids re-running when other store state changes
+    const alreadyDone = useEditorStore.getState().initializedPages[pageNumber];
+    if (alreadyDone) return;
+
+    let cancelled = false;
+
+    async function extractText() {
+      try {
+        const page = await pdf.getPage(pageNumber);
+        if (cancelled) return;
+
+        // Use scale=1 viewport for coordinate extraction (normalised)
+        const vp = page.getViewport({ scale, rotation: 0 });
+        const textContent = await page.getTextContent();
+        if (cancelled) return;
+
+        const extracted: EditorElement[] = [];
+
+        for (const item of textContent.items as any[]) {
+          if (!item.str?.trim()) continue;
+
+          const tx = item.transform;
+          const fontHeight = Math.sqrt(tx[0] ** 2 + tx[1] ** 2);
+          const [screenX, screenY] = vp.convertToViewportPoint(tx[4], tx[5]);
+          const fontSize = Math.max(11, Math.round(fontHeight * scale));
+          const width = item.width
+            ? Math.max(30, Math.round(item.width * scale))
+            : Math.max(40, item.str.length * fontSize * 0.55);
+          const height = Math.max(16, Math.round(fontSize * 1.35));
+          const topY = screenY - height;
+
+          extracted.push({
+            id: crypto.randomUUID(),
+            type: "text",
+            page: pageNumber,
+            position: { x: Math.max(0, Math.round(screenX)), y: Math.max(0, Math.round(topY)) },
+            size: { width: Math.round(width), height: Math.round(height) },
+            text: item.str,
+            fontSize,
+            fontFamily: "Helvetica",
+            color: "#000000",
+            isOriginalPdfText: true,
+            originalText: item.str,
+            originalPosition: { x: Math.max(0, Math.round(screenX)), y: Math.max(0, Math.round(topY)) },
+            originalSize: { width: Math.round(width), height: Math.round(height) },
+          });
+        }
+
+        if (!cancelled) {
+          if (extracted.length > 0) addExtractedElements(extracted);
+          markPageInitialized(pageNumber);
+        }
+      } catch (err) {
+        // Text extraction is best-effort; silently skip on failure
+      }
+    }
+
+    extractText();
+    return () => { cancelled = true; };
+    // Only run once per (pageNumber, pdf) pair — intentionally omitting store refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdf, pageNumber]);
 
   return (
     <div
       id={`pdf-page-${pageNumber}`}
-      className="relative mx-auto pdf-page-enter"
+      className="relative mx-auto"
       style={{ width: dimensions.width || 612 }}
     >
       {/* Page card */}
       <div
-        className="relative bg-white select-none"
+        className="relative bg-white select-none overflow-hidden"
         style={{
           width: dimensions.width || 612,
           height: dimensions.height || 792,
-          boxShadow:
-            "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 4px 12px 0 rgb(0 0 0 / 0.08)",
+          boxShadow: "0 1px 3px 0 rgb(0 0 0/0.1), 0 4px 16px 0 rgb(0 0 0/0.08)",
         }}
       >
-        {/* Shimmer loading */}
+        {/* Shimmer while rendering */}
         {loading && (
-          <div className="absolute inset-0 z-10">
-            <div className="shimmer h-full w-full" />
-          </div>
+          <div className="absolute inset-0 z-10 shimmer" />
         )}
 
-        {/* Render error */}
         {renderError && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-red-50 p-6 text-center">
-            <div className="rounded-lg border border-red-200 bg-white p-4 shadow-sm">
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-red-50 p-6">
+            <div className="rounded-lg border border-red-200 bg-white p-4 text-center shadow-sm">
               <p className="text-sm font-semibold text-red-700">Render error — page {pageNumber}</p>
-              <p className="mt-1 text-xs text-red-500">{renderError}</p>
+              <p className="mt-1 text-xs text-red-500 break-words">{renderError}</p>
             </div>
           </div>
         )}

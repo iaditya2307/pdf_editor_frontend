@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import PdfPage from "@/components/pdf/PdfPage";
 import { useEditorStore } from "@/store/editorStore";
@@ -29,22 +29,23 @@ export default function PdfViewer({
   const activePage = useEditorStore((state) => state.activePage);
   const deletedPages = useEditorStore((state) => state.deletedPages);
 
-  const [pageDimensions, setPageDimensions] = useState<
-    Record<number, { width: number; height: number }>
-  >({});
+  // Track which pages are visible in the viewport (for lazy rendering)
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  const pageDimsRef = useRef<Record<number, { width: number; height: number }>>({});
 
   const handleDimensionMeasured = useCallback(
     (pageNumber: number, width: number, height: number) => {
-      setPageDimensions((prev) => {
-        if (prev[pageNumber]?.width === width && prev[pageNumber]?.height === height) return prev;
-        const updated = { ...prev, [pageNumber]: { width, height } };
-        onDimensionsUpdate?.(updated);
-        return updated;
-      });
+      const prev = pageDimsRef.current;
+      if (prev[pageNumber]?.width === width && prev[pageNumber]?.height === height) return;
+      pageDimsRef.current = { ...prev, [pageNumber]: { width, height } };
+      onDimensionsUpdate?.(pageDimsRef.current);
     },
     [onDimensionsUpdate]
   );
 
+  // Load PDF document
   useEffect(() => {
     let cancelled = false;
 
@@ -53,16 +54,24 @@ export default function PdfViewer({
         setLoading(true);
         setError(null);
         setPdf(null);
+        setVisiblePages(new Set());
         onPdfLoad?.(null);
 
         const buf = await file.arrayBuffer();
-        const loaded = await pdfjsLib.getDocument({ data: buf }).promise;
+        const loaded = await pdfjsLib.getDocument({
+          data: buf,
+          // Enable CMap for better font support
+          cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist/cmaps/",
+          cMapPacked: true,
+        }).promise;
 
         if (cancelled) return;
 
         setPdf(loaded);
         onPageCountChange?.(loaded.numPages);
         onPdfLoad?.(loaded);
+        // Initially mark first 2 pages visible
+        setVisiblePages(new Set([1, 2]));
         setLoading(false);
       } catch (err) {
         if (!cancelled) {
@@ -76,7 +85,43 @@ export default function PdfViewer({
     return () => { cancelled = true; };
   }, [file, onPageCountChange, onPdfLoad]);
 
-  // Scroll to active page when it changes
+  // Intersection observer: mark pages visible as user scrolls
+  useEffect(() => {
+    if (!pdf) return;
+
+    observerRef.current?.disconnect();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisiblePages((prev) => {
+          const next = new Set(prev);
+          entries.forEach((entry) => {
+            const pageNum = Number((entry.target as HTMLElement).dataset.page);
+            if (!pageNum) return;
+            if (entry.isIntersecting) {
+              next.add(pageNum);
+              // Pre-load adjacent pages
+              next.add(pageNum + 1);
+              if (pageNum > 1) next.add(pageNum - 1);
+            }
+          });
+          return next;
+        });
+      },
+      { rootMargin: "200px" } // render 200px before entering viewport
+    );
+
+    observerRef.current = observer;
+
+    // Observe all page sentinel elements
+    setTimeout(() => {
+      document.querySelectorAll("[data-page-sentinel]").forEach((el) => observer.observe(el));
+    }, 100);
+
+    return () => observer.disconnect();
+  }, [pdf]);
+
+  // Scroll to active page when sidebar thumbnail is clicked
   useEffect(() => {
     if (!pdf) return;
     const el = document.getElementById(`pdf-page-${activePage}`);
@@ -109,26 +154,35 @@ export default function PdfViewer({
 
   if (!pdf) return null;
 
-  const visiblePages = Array.from({ length: pdf.numPages }, (_, i) => i + 1).filter(
+  const allPages = Array.from({ length: pdf.numPages }, (_, i) => i + 1).filter(
     (n) => !deletedPages.includes(n)
   );
 
   return (
     <div
+      id="pdf-scroll-container"
       className="h-full overflow-auto bg-[#f0f2f5]"
       style={{ scrollPaddingTop: "24px" }}
     >
       <div className="py-8 space-y-6">
-        {visiblePages.map((pageNumber) => (
-          <PdfPage
-            key={pageNumber}
-            pdf={pdf}
-            pageNumber={pageNumber}
-            scale={zoom}
-            onDimensionMeasured={handleDimensionMeasured}
-          />
+        {allPages.map((pageNumber) => (
+          <div key={pageNumber} id={`pdf-page-${pageNumber}`}>
+            {/* Sentinel element that the IntersectionObserver watches */}
+            <div
+              data-page-sentinel
+              data-page={pageNumber}
+              className="absolute"
+              aria-hidden="true"
+            />
+            <PdfPage
+              pdf={pdf}
+              pageNumber={pageNumber}
+              scale={zoom}
+              onDimensionMeasured={handleDimensionMeasured}
+              isVisible={visiblePages.has(pageNumber)}
+            />
+          </div>
         ))}
-        {/* Bottom padding so last page isn't flush against the edge */}
         <div className="h-8" />
       </div>
     </div>
