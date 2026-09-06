@@ -103,7 +103,7 @@ export default function PdfPage({
 
   return (
     <div
-      id={`page-${pageNumber}`}
+      id={`pdf-page-${pageNumber}`}
       className="relative mx-auto mb-6 bg-white shadow-lg transition-all"
       style={{
         width: dimensions.width || 600,

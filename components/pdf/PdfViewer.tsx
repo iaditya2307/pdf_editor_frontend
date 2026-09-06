@@ -11,24 +11,28 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 interface PdfViewerProps {
   file: File;
-  onLoadSuccess?: (numPages: number) => void;
+  onPageCountChange?: (count: number) => void;
+  onPdfLoad?: (pdf: pdfjsLib.PDFDocumentProxy | null) => void;
 }
 
 export default function PdfViewer({
   file,
-  onLoadSuccess,
+  onPageCountChange,
+  onPdfLoad,
 }: PdfViewerProps) {
   const [pdf, setPdf] =
     useState<pdfjsLib.PDFDocumentProxy | null>(null);
 
   const [loading, setLoading] = useState(true);
 
-  const [error, setError] = useState<string | null>(
-    null
-  );
+  const [error, setError] = useState<string | null>(null);
 
   const zoom = useEditorStore(
     (state) => state.zoom
+  );
+
+  const activePage = useEditorStore(
+    (state) => state.activePage
   );
 
   useEffect(() => {
@@ -39,50 +43,36 @@ export default function PdfViewer({
         setLoading(true);
         setError(null);
         setPdf(null);
+        onPdfLoad?.(null);
 
-        console.log("Loading PDF:", file.name);
-
-        const arrayBuffer =
-          await file.arrayBuffer();
-
-        console.log(
-          "PDF size:",
-          arrayBuffer.byteLength
-        );
-
-        const loadingTask =
-          pdfjsLib.getDocument({
-            data: arrayBuffer,
-          });
+        const arrayBuffer = await file.arrayBuffer();
 
         const loadedPdf =
-          await loadingTask.promise;
+          await pdfjsLib.getDocument({
+            data: arrayBuffer,
+          }).promise;
 
-        console.log(
-          "PDF loaded successfully"
-        );
+        if (cancelled) {
+          return;
+        }
 
-        console.log(
-          "Number of pages:",
+        setPdf(loadedPdf);
+
+        onPageCountChange?.(
           loadedPdf.numPages
         );
 
-        if (!cancelled) {
-          setPdf(loadedPdf);
-          setLoading(false);
-          onLoadSuccess?.(loadedPdf.numPages);
-        }
+        onPdfLoad?.(loadedPdf);
+
+        setLoading(false);
       } catch (err) {
-        console.error(
-          "PDF LOAD ERROR:",
-          err
-        );
+        console.error("PDF LOAD ERROR:", err);
 
         if (!cancelled) {
           setError(
             err instanceof Error
               ? err.message
-              : "Unknown PDF error"
+              : "Unable to load PDF"
           );
 
           setLoading(false);
@@ -95,39 +85,40 @@ export default function PdfViewer({
     return () => {
       cancelled = true;
     };
-  }, [file]);
+  }, [file, onPageCountChange, onPdfLoad]);
+
+  useEffect(() => {
+    if (!pdf) return;
+
+    const pageElement =
+      document.getElementById(
+        `pdf-page-${activePage}`
+      );
+
+    pageElement?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [activePage, pdf]);
 
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center bg-gray-100">
-        <div className="text-center">
-          <div className="text-lg font-medium">
-            Loading PDF...
-          </div>
-
-          <div className="mt-2 text-sm text-gray-500">
-            {file.name}
-          </div>
-        </div>
+        Loading PDF...
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center bg-gray-100">
-        <div className="max-w-md rounded-lg border bg-white p-6 shadow">
+      <div className="flex h-full items-center justify-center bg-gray-100 font-sans">
+        <div className="rounded-lg bg-white p-6 shadow">
           <h2 className="font-semibold text-red-600">
             Failed to load PDF
           </h2>
 
-          <p className="mt-3 break-words text-sm text-gray-600">
+          <p className="mt-2 text-sm text-gray-600">
             {error}
-          </p>
-
-          <p className="mt-4 text-xs text-gray-400">
-            Check the browser console for the full
-            error.
           </p>
         </div>
       </div>

@@ -1,89 +1,49 @@
 "use client";
 
 import { useState } from "react";
+import * as pdfjsLib from "pdfjs-dist";
 
 import PdfViewer from "@/components/pdf/PdfViewer";
-
 import PageSidebar from "@/components/editor/PageSidebar";
-
 import Toolbar from "@/components/editor/Toolbar";
-
-import {
-  useEditorStore,
-} from "@/store/editorStore";
-
-import type {
-  EditorTool,
-} from "@/types/editor";
+import { useEditorStore } from "@/store/editorStore";
 
 export default function EditorPage() {
-  const [file, setFile] =
-    useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [pageCount, setPageCount] = useState(0);
+  const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
 
-  const [pageCount, setPageCount] =
-    useState(1);
-
-  const activeTool =
-    useEditorStore(
-      (state) => state.activeTool
-    );
-
-  const setTool =
-    useEditorStore(
-      (state) => state.setTool
-    );
-
-  const activePage =
-    useEditorStore(
-      (state) => state.activePage
-    );
-
-  const setActivePage =
-    useEditorStore(
-      (state) => state.setActivePage
-    );
+  const activeTool = useEditorStore((state) => state.activeTool);
+  const setTool = useEditorStore((state) => state.setTool);
+  const activePage = useEditorStore((state) => state.activePage);
+  const setActivePage = useEditorStore((state) => state.setActivePage);
 
   const handleFileChange = (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
-    const selectedFile =
-      event.target.files?.[0];
+    const selectedFile = event.target.files?.[0];
 
     if (!selectedFile) {
       return;
     }
 
-    if (
-      selectedFile.type !==
-      "application/pdf"
-    ) {
-      alert(
-        "Please select a PDF file."
-      );
-
+    if (selectedFile.type !== "application/pdf") {
+      alert("Please select a PDF file.");
       return;
     }
 
     setFile(selectedFile);
     setActivePage(1);
-    setPageCount(1);
-  };
-
-  const handlePageChange = (page: number) => {
-    setActivePage(page);
-    const element = document.getElementById(`page-${page}`);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth" });
-    }
+    setPageCount(0);
+    setPdf(null);
   };
 
   return (
     <main className="flex h-screen flex-col bg-gray-100">
       {/* HEADER */}
-
       <header className="flex h-14 shrink-0 items-center justify-between border-b bg-white px-5">
         <div className="flex items-center gap-3">
-          <h1 className="font-semibold">
+          <h1 className="font-semibold text-gray-900">
             PDF Editor
           </h1>
 
@@ -99,6 +59,8 @@ export default function EditorPage() {
             <button
               onClick={() => {
                 setFile(null);
+                setPageCount(0);
+                setPdf(null);
               }}
               className="rounded-md border px-4 py-2 text-sm hover:bg-gray-50"
             >
@@ -113,9 +75,7 @@ export default function EditorPage() {
               type="file"
               accept="application/pdf"
               className="hidden"
-              onChange={
-                handleFileChange
-              }
+              onChange={handleFileChange}
             />
           </label>
 
@@ -129,48 +89,36 @@ export default function EditorPage() {
       </header>
 
       {/* TOOLBAR */}
-
       <Toolbar
         activeTool={activeTool}
         onToolChange={setTool}
-        onUndo={() =>
-          console.log("Undo")
-        }
-        onRedo={() =>
-          console.log("Redo")
-        }
       />
 
       {/* WORKSPACE */}
-
       <div className="flex min-h-0 flex-1">
         {file ? (
           <>
             <PageSidebar
               pageCount={pageCount}
               activePage={activePage}
-              onPageChange={
-                handlePageChange
-              }
+              onPageChange={setActivePage}
+              pdf={pdf}
             />
 
             <div className="min-w-0 flex-1">
               <PdfViewer
                 file={file}
-                onLoadSuccess={(count) =>
-                  setPageCount(count)
-                }
+                onPageCountChange={setPageCount}
+                onPdfLoad={setPdf}
               />
             </div>
           </>
         ) : (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center">
-              <div className="mb-4 text-5xl">
-                📄
-              </div>
+              <div className="mb-4 text-5xl">📄</div>
 
-              <h2 className="text-2xl font-semibold">
+              <h2 className="text-2xl font-semibold text-gray-900">
                 Start editing a PDF
               </h2>
 
