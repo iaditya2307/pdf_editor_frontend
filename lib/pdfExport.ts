@@ -1,21 +1,25 @@
 import { PDFDocument, rgb, degrees, StandardFonts } from "pdf-lib";
 import { EditorElement } from "@/types/editor";
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
 function hexToRgb(hex: string) {
-  let cleanHex = hex.replace("#", "");
-  if (cleanHex.length === 3) {
-    cleanHex = cleanHex
-      .split("")
-      .map((c) => c + c)
-      .join("");
-  }
-  const num = parseInt(cleanHex, 16);
-  if (isNaN(num)) return rgb(0, 0, 0);
-  const r = ((num >> 16) & 255) / 255;
-  const g = ((num >> 8) & 255) / 255;
-  const b = (num & 255) / 255;
-  return rgb(r, g, b);
+  let h = hex.replace("#", "");
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const n = parseInt(h, 16);
+  if (isNaN(n)) return rgb(0, 0, 0);
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
+
+function dataUriToBytes(dataUri: string): Uint8Array {
+  const base64 = dataUri.split(",")[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// ── Main export ────────────────────────────────────────────────────────────
 
 export async function exportPdf({
   file,
@@ -31,195 +35,69 @@ export async function exportPdf({
   pageDimensions: Record<number, { width: number; height: number }>;
 }): Promise<Uint8Array> {
   const arrayBuffer = await file.arrayBuffer();
-  const pdfDoc = await PDFDocument.load(arrayBuffer);
+
+  let pdfDoc: PDFDocument;
+  try {
+    pdfDoc = await PDFDocument.load(arrayBuffer, {
+      // Allow loading of PDFs with minor errors
+      ignoreEncryption: true,
+    });
+  } catch (err) {
+    throw new Error(
+      `Could not open PDF for editing: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const timesFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
   const courierFont = await pdfDoc.embedFont(StandardFonts.Courier);
 
   const getFont = (family: string) => {
-    const lower = family.toLowerCase();
-    if (lower.includes("times") || lower.includes("serif")) return timesFont;
-    if (lower.includes("courier") || lower.includes("mono")) return courierFont;
+    const l = (family || "").toLowerCase();
+    if (l.includes("times") || l.includes("serif")) return timesFont;
+    if (l.includes("courier") || l.includes("mono")) return courierFont;
     return helveticaFont;
   };
 
-  const totalOriginalPages = pdfDoc.getPageCount();
+  const totalPages = pdfDoc.getPageCount();
 
-  for (let pageNum = 1; pageNum <= totalOriginalPages; pageNum++) {
+  for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     if (deletedPages.includes(pageNum)) continue;
 
     const pageIndex = pageNum - 1;
     const pdfPage = pdfDoc.getPage(pageIndex);
 
-    const rotationAngle = pageRotations[pageNum] || 0;
+    // Apply rotation
+    const rotationAngle = pageRotations[pageNum] ?? 0;
     if (rotationAngle !== 0) {
-      const currentRot = pdfPage.getRotation().angle;
-      pdfPage.setRotation(degrees((currentRot + rotationAngle) % 360));
+      const current = pdfPage.getRotation().angle;
+      pdfPage.setRotation(degrees((current + rotationAngle) % 360));
     }
 
-    const rendered = pageDimensions[pageNum] || {
-      width: pdfPage.getWidth(),
-      height: pdfPage.getHeight(),
-    };
+    // Raw PDF page dimensions (in PDF points)
+    const pdfW = pdfPage.getWidth();
+    const pdfH = pdfPage.getHeight();
 
-    const pdfWidth = pdfPage.getWidth();
-    const pdfHeight = pdfPage.getHeight();
+    // Rendered canvas dimensions (in CSS pixels at zoom level)
+    // If pageDimensions is not available (page not yet scrolled into view),
+    // fall back to PDF native size — coordinates will still be correct
+    // because text extraction also used scale from the same viewport.
+    const rendered = pageDimensions[pageNum];
+    const scaleX = rendered ? pdfW / rendered.width : 1;
+    const scaleY = rendered ? pdfH / rendered.height : 1;
 
-    const scaleX = pdfWidth / rendered.width;
-    const scaleY = pdfHeight / rendered.height;
+    const pageElems = elements.filter((el) => el.page === pageNum);
 
-    const pageElements = elements.filter((el) => el.page === pageNum);
-
-    for (const el of pageElements) {
-      if (el.type === "text") {
-        if (!el.text || !el.text.trim()) continue;
-
-        // White out original text background if modified original text
-        if (el.isOriginalPdfText && el.originalPosition && el.originalSize) {
-          const origPdfX = el.originalPosition.x * scaleX;
-          const origPdfW = el.originalSize.width * scaleX;
-          const origPdfH = el.originalSize.height * scaleY;
-          const origPdfY = pdfHeight - (el.originalPosition.y * scaleY) - origPdfH;
-
-          pdfPage.drawRectangle({
-            x: origPdfX,
-            y: origPdfY,
-            width: origPdfW,
-            height: origPdfH,
-            color: rgb(1, 1, 1),
-          });
-        }
-
-        const font = getFont(el.fontFamily);
-        const fontSize = el.fontSize * scaleY;
-        const color = hexToRgb(el.color);
-
-        const pdfX = el.position.x * scaleX;
-        const pdfY = pdfHeight - (el.position.y * scaleY) - fontSize;
-
-        const lines = el.text.split("\n");
-        let currentY = pdfY;
-
-        for (const line of lines) {
-          pdfPage.drawText(line, {
-            x: pdfX,
-            y: currentY,
-            size: fontSize,
-            font,
-            color,
-          });
-          currentY -= fontSize * 1.2;
-        }
-      } else if (el.type === "rectangle") {
-        const pdfX = el.position.x * scaleX;
-        const pdfWidthEl = el.size.width * scaleX;
-        const pdfHeightEl = el.size.height * scaleY;
-        const pdfY = pdfHeight - (el.position.y * scaleY) - pdfHeightEl;
-
-        pdfPage.drawRectangle({
-          x: pdfX,
-          y: pdfY,
-          width: pdfWidthEl,
-          height: pdfHeightEl,
-          borderColor: hexToRgb(el.strokeColor),
-          borderWidth: el.strokeWidth * scaleX,
-          color: el.fillColor ? hexToRgb(el.fillColor) : undefined,
-        });
-      } else if (el.type === "circle") {
-        const pdfX = (el.position.x + el.size.width / 2) * scaleX;
-        const pdfY = pdfHeight - ((el.position.y + el.size.height / 2) * scaleY);
-        const rx = (el.size.width / 2) * scaleX;
-        const ry = (el.size.height / 2) * scaleY;
-
-        pdfPage.drawEllipse({
-          x: pdfX,
-          y: pdfY,
-          xScale: rx,
-          yScale: ry,
-          borderColor: hexToRgb(el.strokeColor),
-          borderWidth: el.strokeWidth * scaleX,
-          color: el.fillColor ? hexToRgb(el.fillColor) : undefined,
-        });
-      } else if (el.type === "line") {
-        const startX = el.position.x * scaleX;
-        const startY = pdfHeight - (el.position.y * scaleY);
-        const endX = (el.position.x + el.size.width) * scaleX;
-        const endY = pdfHeight - ((el.position.y + el.size.height) * scaleY);
-
-        pdfPage.drawLine({
-          start: { x: startX, y: startY },
-          end: { x: endX, y: endY },
-          color: hexToRgb(el.strokeColor),
-          thickness: el.strokeWidth * scaleX,
-        });
-      } else if (el.type === "highlight") {
-        const pdfX = el.position.x * scaleX;
-        const pdfWidthEl = el.size.width * scaleX;
-        const pdfHeightEl = el.size.height * scaleY;
-        const pdfY = pdfHeight - (el.position.y * scaleY) - pdfHeightEl;
-
-        pdfPage.drawRectangle({
-          x: pdfX,
-          y: pdfY,
-          width: pdfWidthEl,
-          height: pdfHeightEl,
-          color: hexToRgb(el.color),
-          opacity: el.opacity || 0.35,
-        });
-      } else if (el.type === "draw") {
-        if (!el.points || el.points.length < 2) continue;
-
-        for (let i = 0; i < el.points.length - 1; i++) {
-          const pt1 = el.points[i];
-          const pt2 = el.points[i + 1];
-
-          pdfPage.drawLine({
-            start: {
-              x: pt1.x * scaleX,
-              y: pdfHeight - (pt1.y * scaleY),
-            },
-            end: {
-              x: pt2.x * scaleX,
-              y: pdfHeight - (pt2.y * scaleY),
-            },
-            color: hexToRgb(el.strokeColor),
-            thickness: el.strokeWidth * scaleX,
-          });
-        }
-      } else if (el.type === "image") {
-        if (!el.src) continue;
-
-        try {
-          let embeddedImage;
-          if (el.src.startsWith("data:image/png")) {
-            embeddedImage = await pdfDoc.embedPng(el.src);
-          } else if (el.src.startsWith("data:image/jpeg") || el.src.startsWith("data:image/jpg")) {
-            embeddedImage = await pdfDoc.embedJpg(el.src);
-          } else {
-            const res = await fetch(el.src);
-            const bytes = await res.arrayBuffer();
-            embeddedImage = await pdfDoc.embedPng(bytes);
-          }
-
-          const pdfX = el.position.x * scaleX;
-          const pdfWidthEl = el.size.width * scaleX;
-          const pdfHeightEl = el.size.height * scaleY;
-          const pdfY = pdfHeight - (el.position.y * scaleY) - pdfHeightEl;
-
-          pdfPage.drawImage(embeddedImage, {
-            x: pdfX,
-            y: pdfY,
-            width: pdfWidthEl,
-            height: pdfHeightEl,
-          });
-        } catch (imgError) {
-          console.error("Error embedding image into PDF:", imgError);
-        }
+    for (const el of pageElems) {
+      try {
+        await drawElement(el, pdfPage, pdfW, pdfH, scaleX, scaleY, pdfDoc, getFont);
+      } catch (elErr) {
+        console.warn(`Skipping element ${el.id} on page ${pageNum}:`, elErr);
       }
     }
   }
 
+  // Remove deleted pages in reverse order to keep indices stable
   const sortedDeleted = [...deletedPages].sort((a, b) => b - a);
   for (const pageNum of sortedDeleted) {
     if (pageNum >= 1 && pageNum <= pdfDoc.getPageCount()) {
@@ -227,17 +105,199 @@ export async function exportPdf({
     }
   }
 
-  return await pdfDoc.save();
+  return pdfDoc.save();
 }
 
+async function drawElement(
+  el: EditorElement,
+  pdfPage: ReturnType<PDFDocument["getPage"]>,
+  pdfW: number,
+  pdfH: number,
+  scaleX: number,
+  scaleY: number,
+  pdfDoc: PDFDocument,
+  getFont: (family: string) => ReturnType<PDFDocument["embedFont"]> extends Promise<infer F> ? F : never
+) {
+  // Convert screen coords → PDF coords
+  // Screen: top-left origin, Y grows downward
+  // PDF:    bottom-left origin, Y grows upward
+  const sx = (v: number) => v * scaleX;
+  const sy = (v: number) => v * scaleY;
+  const toPdfY = (screenY: number, elH: number) => pdfH - sy(screenY) - sy(elH);
+
+  switch (el.type) {
+    case "text": {
+      if (!el.text?.trim()) return;
+
+      const font = getFont(el.fontFamily);
+      const fontSize = Math.max(4, sy(el.fontSize));
+      const color = hexToRgb(el.color);
+
+      // Erase original text area if this is a modified original element
+      if (el.isOriginalPdfText && el.originalPosition && el.originalSize) {
+        // Only whiteout if text was changed
+        if (el.text !== el.originalText) {
+          const ox = sx(el.originalPosition.x);
+          const ow = sx(el.originalSize.width) + 2;
+          const oh = sy(el.originalSize.height) + 2;
+          const oy = pdfH - sy(el.originalPosition.y) - oh;
+
+          pdfPage.drawRectangle({
+            x: Math.max(0, ox - 1),
+            y: Math.max(0, oy - 1),
+            width: ow,
+            height: oh,
+            color: rgb(1, 1, 1),
+            opacity: 1,
+          });
+        }
+      }
+
+      const pdfX = sx(el.position.x);
+      const lines = el.text.split("\n");
+      const lineHeight = fontSize * 1.25;
+      // Start Y: top of element
+      let currentY = toPdfY(el.position.y, 0) - fontSize;
+
+      for (const line of lines) {
+        if (line.trim()) {
+          // Clip text to page bounds
+          const clampedX = Math.max(0, Math.min(pdfW - 4, pdfX));
+          const clampedY = Math.max(0, Math.min(pdfH - fontSize, currentY));
+          pdfPage.drawText(line, { x: clampedX, y: clampedY, size: fontSize, font, color });
+        }
+        currentY -= lineHeight;
+      }
+      break;
+    }
+
+    case "rectangle": {
+      pdfPage.drawRectangle({
+        x: sx(el.position.x),
+        y: toPdfY(el.position.y, el.size.height),
+        width: sx(el.size.width),
+        height: sy(el.size.height),
+        borderColor: hexToRgb(el.strokeColor),
+        borderWidth: Math.max(0.5, sx(el.strokeWidth)),
+        color: el.fillColor ? hexToRgb(el.fillColor) : undefined,
+        opacity: el.fillColor ? 1 : undefined,
+      });
+      break;
+    }
+
+    case "circle": {
+      pdfPage.drawEllipse({
+        x: sx(el.position.x + el.size.width / 2),
+        y: pdfH - sy(el.position.y + el.size.height / 2),
+        xScale: sx(el.size.width / 2),
+        yScale: sy(el.size.height / 2),
+        borderColor: hexToRgb(el.strokeColor),
+        borderWidth: Math.max(0.5, sx(el.strokeWidth)),
+        color: el.fillColor ? hexToRgb(el.fillColor) : undefined,
+      });
+      break;
+    }
+
+    case "line": {
+      pdfPage.drawLine({
+        start: { x: sx(el.position.x), y: pdfH - sy(el.position.y) },
+        end: {
+          x: sx(el.position.x + el.size.width),
+          y: pdfH - sy(el.position.y + el.size.height),
+        },
+        color: hexToRgb(el.strokeColor),
+        thickness: Math.max(0.5, sx(el.strokeWidth)),
+      });
+      break;
+    }
+
+    case "highlight": {
+      pdfPage.drawRectangle({
+        x: sx(el.position.x),
+        y: toPdfY(el.position.y, el.size.height),
+        width: sx(el.size.width),
+        height: sy(el.size.height),
+        color: hexToRgb(el.color),
+        opacity: el.opacity ?? 0.4,
+      });
+      break;
+    }
+
+    case "draw": {
+      const pts = el.points;
+      if (!pts || pts.length < 2) return;
+
+      for (let i = 0; i < pts.length - 1; i++) {
+        pdfPage.drawLine({
+          start: { x: sx(pts[i].x), y: pdfH - sy(pts[i].y) },
+          end: { x: sx(pts[i + 1].x), y: pdfH - sy(pts[i + 1].y) },
+          color: hexToRgb(el.strokeColor),
+          thickness: Math.max(0.5, sx(el.strokeWidth)),
+          lineCap: "Round" as any,
+        });
+      }
+      break;
+    }
+
+    case "image": {
+      if (!el.src) return;
+
+      let embeddedImage;
+      const src = el.src;
+
+      if (src.startsWith("data:image/png")) {
+        embeddedImage = await pdfDoc.embedPng(dataUriToBytes(src));
+      } else if (
+        src.startsWith("data:image/jpeg") ||
+        src.startsWith("data:image/jpg")
+      ) {
+        embeddedImage = await pdfDoc.embedJpg(dataUriToBytes(src));
+      } else if (src.startsWith("data:image/webp") || src.startsWith("data:image/gif")) {
+        // Convert via canvas to PNG
+        const img = await new Promise<HTMLImageElement>((res, rej) => {
+          const i = new Image();
+          i.onload = () => res(i);
+          i.onerror = rej;
+          i.src = src;
+        });
+        const cvs = document.createElement("canvas");
+        cvs.width = img.naturalWidth;
+        cvs.height = img.naturalHeight;
+        cvs.getContext("2d")!.drawImage(img, 0, 0);
+        const pngDataUrl = cvs.toDataURL("image/png");
+        embeddedImage = await pdfDoc.embedPng(dataUriToBytes(pngDataUrl));
+      } else {
+        // URL — fetch and embed
+        const res = await fetch(src);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        embeddedImage = await pdfDoc.embedPng(bytes);
+      }
+
+      pdfPage.drawImage(embeddedImage, {
+        x: sx(el.position.x),
+        y: toPdfY(el.position.y, el.size.height),
+        width: sx(el.size.width),
+        height: sy(el.size.height),
+      });
+      break;
+    }
+  }
+}
+
+// ── Download helper ────────────────────────────────────────────────────────
+
 export function downloadPdfBlob(bytes: Uint8Array, filename: string) {
-  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
+  const blob = new Blob([bytes], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  // Small delay before cleanup so the browser registers the download
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 100);
 }
