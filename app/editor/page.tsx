@@ -9,7 +9,15 @@ import Toolbar from "@/components/editor/Toolbar";
 import PropertiesBar from "@/components/editor/PropertiesBar";
 import { useEditorStore } from "@/store/editorStore";
 import { exportPdf, downloadPdfBlob } from "@/lib/pdfExport";
-import { Download, Upload, X } from "lucide-react";
+import {
+  Download,
+  FolderOpen,
+  X,
+  FileText,
+  Loader2,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 
 export default function EditorPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -29,119 +37,141 @@ export default function EditorPage() {
     pageRotations,
     deletedPages,
     resetEditor,
+    zoom,
+    setZoom,
   } = useEditorStore();
 
-  const handleFileChange = (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const selectedFile = event.target.files?.[0];
-
-    if (!selectedFile) {
-      return;
-    }
-
-    if (selectedFile.type !== "application/pdf") {
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0];
+    if (!selected) return;
+    if (selected.type !== "application/pdf") {
       alert("Please select a valid PDF file.");
       return;
     }
-
     resetEditor();
-    setFile(selectedFile);
+    setFile(selected);
     setActivePage(1);
     setPageCount(0);
     setPdf(null);
+    event.target.value = "";
   };
 
   const handleDownload = async () => {
     if (!file) return;
-
     try {
       setIsExporting(true);
-      const pdfBytes = await exportPdf({
+      const bytes = await exportPdf({
         file,
         elements,
         pageRotations,
         deletedPages,
         pageDimensions,
       });
-
-      const exportFileName = file.name.endsWith(".pdf")
-        ? `${file.name.replace(".pdf", "")}_edited.pdf`
-        : `${file.name}_edited.pdf`;
-
-      downloadPdfBlob(pdfBytes, exportFileName);
+      const name = file.name.replace(/\.pdf$/i, "") + "_edited.pdf";
+      downloadPdfBlob(bytes, name);
     } catch (err) {
-      console.error("Failed to export PDF:", err);
-      alert("Failed to export PDF file. Check console for details.");
+      console.error("Export failed:", err);
+      alert("Failed to export PDF. See console for details.");
     } finally {
       setIsExporting(false);
     }
   };
 
   return (
-    <main className="flex h-screen flex-col bg-gray-100 font-sans">
-      {/* HEADER */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b bg-white px-5 shadow-sm">
-        <div className="flex items-center gap-3">
-          <h1 className="text-base font-bold text-gray-900 flex items-center gap-2">
-            <span className="rounded bg-black p-1 text-white text-xs">PDF</span>
-            Editor Pro
-          </h1>
+    <main className="flex h-screen flex-col bg-[#f0f2f5] overflow-hidden">
+      {/* ── Header ── */}
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#e4e7ec] bg-white px-4 shadow-sm z-20">
+        {/* Brand + file */}
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 shadow-sm">
+            <FileText className="h-4 w-4 text-white" />
+          </div>
+          <div className="hidden sm:block">
+            <h1 className="text-sm font-bold text-gray-900 leading-none">PDF Editor Pro</h1>
+            <p className="text-[10px] text-gray-400 mt-0.5 leading-none">Edit PDF files online</p>
+          </div>
 
           {file && (
-            <span className="max-w-[300px] truncate text-xs font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
-              {file.name}
-            </span>
+            <div className="flex items-center gap-1.5 rounded-full bg-gray-100 pl-2.5 pr-1 py-1 min-w-0 max-w-xs">
+              <span className="truncate text-xs font-medium text-gray-600">{file.name}</span>
+              <button
+                onClick={() => {
+                  setFile(null);
+                  setPageCount(0);
+                  setPdf(null);
+                  resetEditor();
+                }}
+                className="ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-600 transition"
+                title="Close document"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Actions */}
+        <div className="flex items-center gap-2 shrink-0">
           {file && (
-            <button
-              onClick={() => {
-                setFile(null);
-                setPageCount(0);
-                setPdf(null);
-                resetEditor();
-              }}
-              className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition"
-            >
-              <X className="h-3.5 w-3.5" />
-              <span>Close</span>
-            </button>
+            <div className="flex items-center gap-1 rounded-lg border border-[#e4e7ec] bg-gray-50 px-1 py-0.5">
+              <button
+                onClick={() => setZoom(Math.max(0.5, Math.round((zoom - 0.1) * 10) / 10))}
+                className="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-white hover:text-gray-900 transition"
+                title="Zoom out"
+              >
+                <ZoomOut className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setZoom(1)}
+                className="px-1.5 text-xs font-medium text-gray-600 tabular-nums hover:text-gray-900 transition min-w-[3rem] text-center"
+                title="Reset zoom"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                onClick={() => setZoom(Math.min(3, Math.round((zoom + 0.1) * 10) / 10))}
+                className="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-white hover:text-gray-900 transition"
+                title="Zoom in"
+              >
+                <ZoomIn className="h-3.5 w-3.5" />
+              </button>
+            </div>
           )}
 
-          <label className="flex cursor-pointer items-center gap-1.5 rounded-md bg-black px-4 py-1.5 text-xs font-medium text-white hover:bg-gray-800 transition shadow-sm">
-            <Upload className="h-3.5 w-3.5" />
+          <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#e4e7ec] bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 shadow-sm">
+            <FolderOpen className="h-3.5 w-3.5 text-gray-500" />
             <span>Open PDF</span>
-
-            <input
-              type="file"
-              accept="application/pdf"
-              className="hidden"
-              onChange={handleFileChange}
-            />
+            <input type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
           </label>
 
           <button
             onClick={handleDownload}
             disabled={!file || isExporting}
-            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40 transition shadow-sm"
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <Download className="h-3.5 w-3.5" />
-            <span>{isExporting ? "Exporting..." : "Download PDF"}</span>
+            {isExporting ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>Exporting…</span>
+              </>
+            ) : (
+              <>
+                <Download className="h-3.5 w-3.5" />
+                <span>Download</span>
+              </>
+            )}
           </button>
         </div>
       </header>
 
-      {/* MAIN TOOLBAR */}
+      {/* ── Toolbar ── */}
       <Toolbar activeTool={activeTool} onToolChange={setTool} />
 
-      {/* PROPERTIES / FORMATTING BAR */}
+      {/* ── Properties Bar ── */}
       <PropertiesBar />
 
-      {/* WORKSPACE */}
-      <div className="flex min-h-0 flex-1">
+      {/* ── Workspace ── */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {file ? (
           <>
             <PageSidebar
@@ -150,8 +180,7 @@ export default function EditorPage() {
               onPageChange={setActivePage}
               pdf={pdf}
             />
-
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 overflow-hidden">
               <PdfViewer
                 file={file}
                 onPageCountChange={setPageCount}
@@ -161,34 +190,57 @@ export default function EditorPage() {
             </div>
           </>
         ) : (
-          <div className="flex flex-1 items-center justify-center">
-            <div className="text-center max-w-md p-8 rounded-xl bg-white shadow-sm border">
-              <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 text-blue-600 text-3xl">
-                📄
-              </div>
-
-              <h2 className="text-xl font-bold text-gray-900">
-                Full-Fledged PDF Editor
-              </h2>
-
-              <p className="mt-2 text-sm text-gray-500 leading-relaxed">
-                Open any PDF document to add text, freehand drawings, highlights, shapes, images, rotate pages, or delete pages — then export a clean, real PDF file.
-              </p>
-
-              <label className="mt-6 inline-flex cursor-pointer items-center gap-2 rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-gray-800 transition shadow">
-                <Upload className="h-4 w-4" />
-                <span>Select PDF File</span>
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  className="hidden"
-                  onChange={handleFileChange}
-                />
-              </label>
-            </div>
-          </div>
+          <EmptyState onFileSelect={handleFileChange} />
         )}
       </div>
     </main>
+  );
+}
+
+function EmptyState({
+  onFileSelect,
+}: {
+  onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
+}) {
+  return (
+    <div className="flex flex-1 items-center justify-center bg-[#f0f2f5] p-8">
+      <div className="w-full max-w-lg">
+        <label className="group block cursor-pointer">
+          <input type="file" accept="application/pdf" className="hidden" onChange={onFileSelect} />
+          <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-gray-300 bg-white px-10 py-16 text-center transition-all duration-200 group-hover:border-blue-400 group-hover:bg-blue-50/50 shadow-sm">
+            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 shadow-inner group-hover:bg-blue-100 transition">
+              <FileText className="h-8 w-8 text-blue-500" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Open a PDF to start editing</h2>
+            <p className="mt-2 text-sm text-gray-500 leading-relaxed">
+              Click here or drag &amp; drop a PDF file.
+              <br />
+              Your edits stay in the browser — nothing is uploaded.
+            </p>
+            <div className="mt-6 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm group-hover:bg-blue-700 transition">
+              <FolderOpen className="h-4 w-4" />
+              Choose PDF file
+            </div>
+          </div>
+        </label>
+
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { icon: "✏️", label: "Edit text" },
+            { icon: "✍️", label: "Draw" },
+            { icon: "🖊️", label: "Highlight" },
+            { icon: "⬇️", label: "Export PDF" },
+          ].map(({ icon, label }) => (
+            <div
+              key={label}
+              className="flex flex-col items-center gap-1.5 rounded-xl bg-white p-3 text-center shadow-sm border border-[#e4e7ec]"
+            >
+              <span className="text-2xl">{icon}</span>
+              <span className="text-xs font-medium text-gray-600">{label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

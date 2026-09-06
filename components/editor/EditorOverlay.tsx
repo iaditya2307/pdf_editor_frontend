@@ -254,6 +254,19 @@ export default function EditorOverlay({
     return null;
   };
 
+  const cursorStyle = () => {
+    if (
+      activeTool === "draw" ||
+      activeTool === "highlight" ||
+      activeTool === "rectangle" ||
+      activeTool === "circle" ||
+      activeTool === "line"
+    )
+      return "crosshair";
+    if (activeTool === "text") return "text";
+    return "default"; // select
+  };
+
   return (
     <div
       ref={overlayRef}
@@ -263,14 +276,7 @@ export default function EditorOverlay({
       className="absolute inset-0 z-10 select-none"
       style={{
         pointerEvents: "auto",
-        cursor:
-          activeTool === "draw" ||
-          activeTool === "highlight" ||
-          activeTool === "rectangle" ||
-          activeTool === "circle" ||
-          activeTool === "line"
-            ? "crosshair"
-            : "text",
+        cursor: cursorStyle(),
       }}
     >
       {renderDrawPreview()}

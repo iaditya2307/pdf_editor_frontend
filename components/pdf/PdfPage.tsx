@@ -178,42 +178,53 @@ export default function PdfPage({
   return (
     <div
       id={`pdf-page-${pageNumber}`}
-      className="relative mx-auto mb-6 bg-white shadow-lg transition-all duration-300 select-none"
-      style={{
-        width: dimensions.width || 600,
-        height: dimensions.height || 800,
-      }}
+      className="relative mx-auto pdf-page-enter"
+      style={{ width: dimensions.width || 612 }}
     >
-      <canvas
-        ref={canvasRef}
-        className="absolute left-0 top-0 block bg-white"
-      />
+      {/* Page card */}
+      <div
+        className="relative bg-white select-none"
+        style={{
+          width: dimensions.width || 612,
+          height: dimensions.height || 792,
+          boxShadow:
+            "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 4px 12px 0 rgb(0 0 0 / 0.08)",
+        }}
+      >
+        {/* Shimmer loading */}
+        {loading && (
+          <div className="absolute inset-0 z-10">
+            <div className="shimmer h-full w-full" />
+          </div>
+        )}
 
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10 font-sans">
-          <div className="text-center">
-            <div className="text-sm font-medium text-gray-600">
-              Rendering page {pageNumber}...
+        {/* Render error */}
+        {renderError && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-red-50 p-6 text-center">
+            <div className="rounded-lg border border-red-200 bg-white p-4 shadow-sm">
+              <p className="text-sm font-semibold text-red-700">Render error — page {pageNumber}</p>
+              <p className="mt-1 text-xs text-red-500">{renderError}</p>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {renderError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-red-50/90 p-4 text-center text-red-600 z-10 font-sans">
-          <div className="text-sm font-medium">
-            Failed to render page {pageNumber}: {renderError}
-          </div>
-        </div>
-      )}
+        <canvas ref={canvasRef} className="absolute left-0 top-0 block" />
 
-      {dimensions.width > 0 && dimensions.height > 0 && (
-        <EditorOverlay
-          pageNumber={pageNumber}
-          width={dimensions.width}
-          height={dimensions.height}
-        />
-      )}
+        {dimensions.width > 0 && dimensions.height > 0 && (
+          <EditorOverlay
+            pageNumber={pageNumber}
+            width={dimensions.width}
+            height={dimensions.height}
+          />
+        )}
+      </div>
+
+      {/* Page number label */}
+      <div className="mt-2 flex justify-center">
+        <span className="rounded-full bg-gray-200/80 px-2.5 py-0.5 text-[10px] font-semibold text-gray-500">
+          {pageNumber}
+        </span>
+      </div>
     </div>
   );
 }
