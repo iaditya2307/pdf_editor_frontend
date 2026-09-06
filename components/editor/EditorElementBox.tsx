@@ -28,17 +28,14 @@ export default function EditorElementBox({
   pageHeight,
 }: EditorElementBoxProps) {
   const {
-    activeTool,
     selectElement,
     updateElement,
     deleteElement,
-    setTool,
   } = useEditorStore();
 
   const [isEditing, setIsEditing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Focus textarea when editing starts
   useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus();
@@ -46,7 +43,6 @@ export default function EditorElementBox({
     }
   }, [isEditing]);
 
-  // Handle Dragging
   const handleDragStart = (e: React.PointerEvent) => {
     if (isEditing) return;
     e.stopPropagation();
@@ -63,18 +59,12 @@ export default function EditorElementBox({
 
       const newX = Math.max(
         0,
-        Math.min(
-          pageWidth - element.size.width,
-          initialPosition.x + deltaX
-        )
+        Math.min(pageWidth - element.size.width, initialPosition.x + deltaX)
       );
 
       const newY = Math.max(
         0,
-        Math.min(
-          pageHeight - element.size.height,
-          initialPosition.y + deltaY
-        )
+        Math.min(pageHeight - element.size.height, initialPosition.y + deltaY)
       );
 
       updateElement(element.id, {
@@ -91,11 +81,7 @@ export default function EditorElementBox({
     window.addEventListener("pointerup", handlePointerUp);
   };
 
-  // Handle Resizing
-  const handleResizeStart = (
-    e: React.PointerEvent,
-    handle: HandleType
-  ) => {
+  const handleResizeStart = (e: React.PointerEvent, handle: HandleType) => {
     e.stopPropagation();
     e.preventDefault();
 
@@ -104,8 +90,8 @@ export default function EditorElementBox({
     const initialPos = { ...element.position };
     const initialSize = { ...element.size };
 
-    const minWidth = 40;
-    const minHeight = 24;
+    const minWidth = 20;
+    const minHeight = 20;
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const deltaX = moveEvent.clientX - startX;
@@ -116,7 +102,6 @@ export default function EditorElementBox({
       let newX = initialPos.x;
       let newY = initialPos.y;
 
-      // Width / X adjustments
       if (handle.includes("e")) {
         newWidth = Math.max(minWidth, initialSize.width + deltaX);
       } else if (handle.includes("w")) {
@@ -127,7 +112,6 @@ export default function EditorElementBox({
         }
       }
 
-      // Height / Y adjustments
       if (handle.includes("s")) {
         newHeight = Math.max(minHeight, initialSize.height + deltaY);
       } else if (handle.includes("n")) {
@@ -164,17 +148,148 @@ export default function EditorElementBox({
     se: "-right-1.5 -bottom-1.5 cursor-nwse-resize",
   };
 
+  const renderContent = () => {
+    switch (element.type) {
+      case "text":
+        return isEditing ? (
+          <textarea
+            ref={textareaRef}
+            value={element.text}
+            onChange={(e) =>
+              updateElement(element.id, { text: e.target.value })
+            }
+            onBlur={() => setIsEditing(false)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setIsEditing(false);
+            }}
+            className="h-full w-full resize-none border-none bg-white p-0.5 outline-none font-sans leading-tight shadow-sm z-30"
+            style={{
+              fontSize: element.fontSize,
+              fontFamily: element.fontFamily,
+              color: element.color,
+            }}
+          />
+        ) : (
+          <div
+            className={`h-full w-full break-words p-0.5 font-sans leading-tight transition ${
+              element.isOriginalPdfText && (element.text !== element.originalText || isSelected)
+                ? "bg-white shadow-sm"
+                : "bg-white/30 hover:bg-white/80"
+            }`}
+            style={{
+              fontSize: element.fontSize,
+              fontFamily: element.fontFamily,
+              color: element.color,
+            }}
+          >
+            {element.text || (
+              <span className="italic opacity-40">Type text...</span>
+            )}
+          </div>
+        );
+
+      case "draw":
+        const points = element.points || [];
+        const pathData = points
+          .map(
+            (pt, i) =>
+              `${i === 0 ? "M" : "L"} ${pt.x - element.position.x} ${
+                pt.y - element.position.y
+              }`
+          )
+          .join(" ");
+
+        return (
+          <svg className="h-full w-full overflow-visible pointer-events-none">
+            <path
+              d={pathData}
+              stroke={element.strokeColor}
+              strokeWidth={element.strokeWidth}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        );
+
+      case "highlight":
+        return (
+          <div
+            className="h-full w-full"
+            style={{
+              backgroundColor: element.color,
+              opacity: element.opacity || 0.35,
+            }}
+          />
+        );
+
+      case "rectangle":
+        return (
+          <div
+            className="h-full w-full"
+            style={{
+              border: `${element.strokeWidth}px solid ${element.strokeColor}`,
+              backgroundColor: element.fillColor || "transparent",
+            }}
+          />
+        );
+
+      case "circle":
+        return (
+          <div
+            className="h-full w-full rounded-full"
+            style={{
+              border: `${element.strokeWidth}px solid ${element.strokeColor}`,
+              backgroundColor: element.fillColor || "transparent",
+            }}
+          />
+        );
+
+      case "line":
+        return (
+          <svg className="h-full w-full overflow-visible pointer-events-none">
+            <line
+              x1={0}
+              y1={0}
+              x2={element.size.width}
+              y2={element.size.height}
+              stroke={element.strokeColor}
+              strokeWidth={element.strokeWidth}
+            />
+          </svg>
+        );
+
+      case "image":
+        return (
+          <img
+            src={element.src}
+            alt="PDF Overlay"
+            className="h-full w-full object-contain pointer-events-none"
+          />
+        );
+
+      default:
+        return null;
+    }
+  };
+
   return (
     <div
       onPointerDown={handleDragStart}
-      onDoubleClick={(e) => {
+      onClick={(e) => {
         e.stopPropagation();
-        setIsEditing(true);
+        selectElement(element.id);
+      }}
+      onDoubleClick={(e) => {
+        if (element.type === "text") {
+          e.stopPropagation();
+          setIsEditing(true);
+        }
       }}
       className={`absolute group select-none ${
         isSelected
-          ? "ring-2 ring-blue-500 shadow-md"
-          : "hover:ring-1 hover:ring-blue-300"
+          ? "ring-2 ring-blue-500 shadow-md z-20"
+          : "hover:ring-1 hover:ring-blue-300 z-10"
       }`}
       style={{
         left: element.position.x,
@@ -184,43 +299,9 @@ export default function EditorElementBox({
         cursor: isEditing ? "text" : "move",
       }}
     >
-      {/* Element Content */}
-      {isEditing ? (
-        <textarea
-          ref={textareaRef}
-          value={element.text}
-          onChange={(e) =>
-            updateElement(element.id, { text: e.target.value })
-          }
-          onBlur={() => setIsEditing(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              setIsEditing(false);
-            }
-          }}
-          className="h-full w-full resize-none border-none bg-transparent p-1 outline-none font-sans"
-          style={{
-            fontSize: element.fontSize,
-            fontFamily: element.fontFamily,
-            color: element.color,
-          }}
-        />
-      ) : (
-        <div
-          className="h-full w-full break-words p-1 font-sans leading-tight"
-          style={{
-            fontSize: element.fontSize,
-            fontFamily: element.fontFamily,
-            color: element.color,
-          }}
-        >
-          {element.text || (
-            <span className="italic opacity-40">Type text...</span>
-          )}
-        </div>
-      )}
+      {renderContent()}
 
-      {/* Resize Handles (Only rendered when selected) */}
+      {/* Resize Handles & Action Buttons */}
       {isSelected && (
         <>
           {(
@@ -238,18 +319,17 @@ export default function EditorElementBox({
             <div
               key={handle}
               onPointerDown={(e) => handleResizeStart(e, handle)}
-              className={`absolute h-3 w-3 rounded-full border border-blue-600 bg-white shadow-sm z-20 ${handlePositions[handle]}`}
+              className={`absolute h-3 w-3 rounded-full border border-blue-600 bg-white shadow-sm z-30 ${handlePositions[handle]}`}
             />
           ))}
 
-          {/* Quick Action Bar: Delete Button */}
           <button
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               deleteElement(element.id);
             }}
-            className="absolute -top-7 right-0 rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow hover:bg-red-600 z-30"
+            className="absolute -top-7 right-0 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow hover:bg-red-700 z-40"
           >
             Delete
           </button>

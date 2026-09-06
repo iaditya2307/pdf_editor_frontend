@@ -1,6 +1,7 @@
 "use client";
 
 import * as pdfjsLib from "pdfjs-dist";
+import { useEditorStore } from "@/store/editorStore";
 import PdfThumbnail from "@/components/pdf/PdfThumbnail";
 
 interface PageSidebarProps {
@@ -16,28 +17,33 @@ export default function PageSidebar({
   onPageChange,
   pdf,
 }: PageSidebarProps) {
-  if (pageCount === 0) {
+  const deletedPages = useEditorStore((state) => state.deletedPages);
+  const activePagesCount = pageCount - deletedPages.length;
+
+  if (pageCount === 0 || activePagesCount <= 0) {
     return (
-      <aside className="w-48 shrink-0 overflow-y-auto border-r bg-gray-50 p-3">
+      <aside className="w-48 shrink-0 overflow-y-auto border-r bg-gray-50 p-3 font-sans">
         <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
           Pages
         </div>
         <div className="py-8 text-center text-xs text-gray-400">
-          No document loaded
+          No pages remaining
         </div>
       </aside>
     );
   }
 
   return (
-    <aside className="w-48 shrink-0 overflow-y-auto border-r bg-gray-50 p-3">
+    <aside className="w-48 shrink-0 overflow-y-auto border-r bg-gray-50 p-3 font-sans">
       <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-        Pages ({pageCount})
+        Pages ({activePagesCount})
       </div>
 
       <div className="space-y-3">
         {Array.from({ length: pageCount }, (_, index) => {
           const pageNumber = index + 1;
+          if (deletedPages.includes(pageNumber)) return null;
+
           const active = pageNumber === activePage;
 
           if (pdf) {

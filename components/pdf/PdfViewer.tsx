@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 
 import PdfPage from "@/components/pdf/PdfPage";
@@ -13,26 +13,41 @@ interface PdfViewerProps {
   file: File;
   onPageCountChange?: (count: number) => void;
   onPdfLoad?: (pdf: pdfjsLib.PDFDocumentProxy | null) => void;
+  onDimensionsUpdate?: (dimensions: Record<number, { width: number; height: number }>) => void;
 }
 
 export default function PdfViewer({
   file,
   onPageCountChange,
   onPdfLoad,
+  onDimensionsUpdate,
 }: PdfViewerProps) {
   const [pdf, setPdf] =
     useState<pdfjsLib.PDFDocumentProxy | null>(null);
 
   const [loading, setLoading] = useState(true);
-
   const [error, setError] = useState<string | null>(null);
 
-  const zoom = useEditorStore(
-    (state) => state.zoom
-  );
+  const zoom = useEditorStore((state) => state.zoom);
+  const activePage = useEditorStore((state) => state.activePage);
+  const deletedPages = useEditorStore((state) => state.deletedPages);
 
-  const activePage = useEditorStore(
-    (state) => state.activePage
+  const [pageDimensions, setPageDimensions] = useState<
+    Record<number, { width: number; height: number }>
+  >({});
+
+  const handleDimensionMeasured = useCallback(
+    (pageNumber: number, width: number, height: number) => {
+      setPageDimensions((prev) => {
+        if (prev[pageNumber]?.width === width && prev[pageNumber]?.height === height) {
+          return prev;
+        }
+        const updated = { ...prev, [pageNumber]: { width, height } };
+        onDimensionsUpdate?.(updated);
+        return updated;
+      });
+    },
+    [onDimensionsUpdate]
   );
 
   useEffect(() => {
@@ -52,18 +67,11 @@ export default function PdfViewer({
             data: arrayBuffer,
           }).promise;
 
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
         setPdf(loadedPdf);
-
-        onPageCountChange?.(
-          loadedPdf.numPages
-        );
-
+        onPageCountChange?.(loadedPdf.numPages);
         onPdfLoad?.(loadedPdf);
-
         setLoading(false);
       } catch (err) {
         console.error("PDF LOAD ERROR:", err);
@@ -74,7 +82,6 @@ export default function PdfViewer({
               ? err.message
               : "Unable to load PDF"
           );
-
           setLoading(false);
         }
       }
@@ -90,10 +97,9 @@ export default function PdfViewer({
   useEffect(() => {
     if (!pdf) return;
 
-    const pageElement =
-      document.getElementById(
-        `pdf-page-${activePage}`
-      );
+    const pageElement = document.getElementById(
+      `pdf-page-${activePage}`
+    );
 
     pageElement?.scrollIntoView({
       behavior: "smooth",
@@ -103,7 +109,7 @@ export default function PdfViewer({
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center bg-gray-100">
+      <div className="flex h-full items-center justify-center bg-gray-100 font-sans text-sm text-gray-500">
         Loading PDF...
       </div>
     );
@@ -112,12 +118,11 @@ export default function PdfViewer({
   if (error) {
     return (
       <div className="flex h-full items-center justify-center bg-gray-100 font-sans">
-        <div className="rounded-lg bg-white p-6 shadow">
+        <div className="rounded-lg bg-white p-6 shadow max-w-md text-center">
           <h2 className="font-semibold text-red-600">
             Failed to load PDF
           </h2>
-
-          <p className="mt-2 text-sm text-gray-600">
+          <p className="mt-2 text-sm text-gray-600 break-words">
             {error}
           </p>
         </div>
@@ -131,17 +136,20 @@ export default function PdfViewer({
 
   return (
     <div className="h-full overflow-auto bg-gray-100 p-8">
-      {Array.from(
-        { length: pdf.numPages },
-        (_, index) => (
+      {Array.from({ length: pdf.numPages }, (_, index) => {
+        const pageNumber = index + 1;
+        if (deletedPages.includes(pageNumber)) return null;
+
+        return (
           <PdfPage
-            key={index + 1}
+            key={pageNumber}
             pdf={pdf}
-            pageNumber={index + 1}
+            pageNumber={pageNumber}
             scale={zoom}
+            onDimensionMeasured={handleDimensionMeasured}
           />
-        )
-      )}
+        );
+      })}
     </div>
   );
 }
