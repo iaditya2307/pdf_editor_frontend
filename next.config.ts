@@ -8,6 +8,10 @@ const nextConfig: NextConfig = {
 
   // Silence Turbopack's warning about having no explicit bundler config.
   turbopack: {},
+
+  // Allow HMR (hot module replacement) from the local network IP
+  // so that changes are picked up when accessing via network address.
+  allowedDevOrigins: ["192.168.1.20"],
 };
 
 export default nextConfig;
