@@ -19,6 +19,69 @@ function dataUriToBytes(dataUri: string): Uint8Array {
   return bytes;
 }
 
+function canEncodeWithFont(font: any, text: string): boolean {
+  try {
+    font.encodeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function renderTextLineAsImage(
+  pdfDoc: PDFDocument,
+  pdfPage: ReturnType<PDFDocument["getPage"]>,
+  line: string,
+  x: number,
+  baselineY: number,
+  fontSize: number,
+  fontFamily: string,
+  colorHex: string,
+  isBold?: boolean,
+  isItalic?: boolean
+) {
+  if (typeof document === "undefined") return;
+
+  const fontStyle = `${isItalic ? "italic " : ""}${isBold ? "bold " : ""}${fontSize}px "${fontFamily || "sans-serif"}", "Noto Sans Devanagari", "Noto Sans", "Segoe UI", Roboto, sans-serif`;
+
+  const tempCvs = document.createElement("canvas");
+  const tempCtx = tempCvs.getContext("2d");
+  if (!tempCtx) return;
+  tempCtx.font = fontStyle;
+
+  const metrics = tempCtx.measureText(line);
+  const textWidth = Math.max(1, Math.ceil(metrics.width));
+  const ascent = metrics.actualBoundingBoxAscent || fontSize * 0.8;
+  const descent = metrics.actualBoundingBoxDescent || fontSize * 0.25;
+  const textHeight = Math.max(1, Math.ceil(ascent + descent + 4));
+
+  const scale = 4;
+  const cvs = document.createElement("canvas");
+  cvs.width = Math.ceil(textWidth * scale);
+  cvs.height = Math.ceil(textHeight * scale);
+
+  const ctx = cvs.getContext("2d");
+  if (!ctx) return;
+
+  ctx.scale(scale, scale);
+  ctx.font = fontStyle;
+  ctx.fillStyle = colorHex;
+  ctx.textBaseline = "top";
+  ctx.fillText(line, 0, 2);
+
+  const pngDataUrl = cvs.toDataURL("image/png");
+  const embeddedImage = await pdfDoc.embedPng(dataUriToBytes(pngDataUrl));
+
+  const imageY = baselineY + ascent + 2 - textHeight;
+
+  pdfPage.drawImage(embeddedImage, {
+    x,
+    y: imageY,
+    width: textWidth,
+    height: textHeight,
+  });
+}
+
 // ── Main export ────────────────────────────────────────────────────────────
 
 export async function exportPdf({
@@ -49,13 +112,37 @@ export async function exportPdf({
   }
 
   const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const timesFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-  const courierFont = await pdfDoc.embedFont(StandardFonts.Courier);
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const helveticaOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+  const helveticaBoldOblique = await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
 
-  const getFont = (family: string) => {
+  const timesFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+  const timesBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+  const timesItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+  const timesBoldItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
+
+  const courierFont = await pdfDoc.embedFont(StandardFonts.Courier);
+  const courierBold = await pdfDoc.embedFont(StandardFonts.CourierBold);
+  const courierOblique = await pdfDoc.embedFont(StandardFonts.CourierOblique);
+  const courierBoldOblique = await pdfDoc.embedFont(StandardFonts.CourierBoldOblique);
+
+  const getFont = (family: string, isBold?: boolean, isItalic?: boolean) => {
     const l = (family || "").toLowerCase();
-    if (l.includes("times") || l.includes("serif")) return timesFont;
-    if (l.includes("courier") || l.includes("mono")) return courierFont;
+    if (l.includes("times") || l.includes("serif")) {
+      if (isBold && isItalic) return timesBoldItalic;
+      if (isBold) return timesBold;
+      if (isItalic) return timesItalic;
+      return timesFont;
+    }
+    if (l.includes("courier") || l.includes("mono")) {
+      if (isBold && isItalic) return courierBoldOblique;
+      if (isBold) return courierBold;
+      if (isItalic) return courierOblique;
+      return courierFont;
+    }
+    if (isBold && isItalic) return helveticaBoldOblique;
+    if (isBold) return helveticaBold;
+    if (isItalic) return helveticaOblique;
     return helveticaFont;
   };
 
@@ -78,10 +165,6 @@ export async function exportPdf({
     const pdfW = pdfPage.getWidth();
     const pdfH = pdfPage.getHeight();
 
-    // Rendered canvas dimensions (in CSS pixels at zoom level)
-    // If pageDimensions is not available (page not yet scrolled into view),
-    // fall back to PDF native size — coordinates will still be correct
-    // because text extraction also used scale from the same viewport.
     const rendered = pageDimensions[pageNum];
     const scaleX = rendered ? pdfW / rendered.width : 1;
     const scaleY = rendered ? pdfH / rendered.height : 1;
@@ -116,7 +199,7 @@ async function drawElement(
   scaleX: number,
   scaleY: number,
   pdfDoc: PDFDocument,
-  getFont: (family: string) => ReturnType<PDFDocument["embedFont"]> extends Promise<infer F> ? F : never
+  getFont: (family: string, isBold?: boolean, isItalic?: boolean) => any
 ) {
   // Convert screen coords → PDF coords
   // Screen: top-left origin, Y grows downward
@@ -129,7 +212,7 @@ async function drawElement(
     case "text": {
       if (!el.text?.trim()) return;
 
-      const font = getFont(el.fontFamily);
+      const font = getFont(el.fontFamily, el.isBold, el.isItalic);
       const fontSize = Math.max(4, sy(el.fontSize));
       const color = hexToRgb(el.color);
 
@@ -164,7 +247,38 @@ async function drawElement(
           // Clip text to page bounds
           const clampedX = Math.max(0, Math.min(pdfW - 4, pdfX));
           const clampedY = Math.max(0, Math.min(pdfH - fontSize, currentY));
-          pdfPage.drawText(line, { x: clampedX, y: clampedY, size: fontSize, font, color });
+
+          if (canEncodeWithFont(font, line)) {
+            try {
+              pdfPage.drawText(line, { x: clampedX, y: clampedY, size: fontSize, font, color });
+            } catch {
+              await renderTextLineAsImage(
+                pdfDoc,
+                pdfPage,
+                line,
+                clampedX,
+                clampedY,
+                fontSize,
+                el.fontFamily,
+                el.color,
+                el.isBold,
+                el.isItalic
+              );
+            }
+          } else {
+            await renderTextLineAsImage(
+              pdfDoc,
+              pdfPage,
+              line,
+              clampedX,
+              clampedY,
+              fontSize,
+              el.fontFamily,
+              el.color,
+              el.isBold,
+              el.isItalic
+            );
+          }
         }
         currentY -= lineHeight;
       }
