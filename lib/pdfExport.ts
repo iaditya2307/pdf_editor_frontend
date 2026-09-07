@@ -19,13 +19,16 @@ function dataUriToBytes(dataUri: string): Uint8Array {
   return bytes;
 }
 
-function canEncodeWithFont(font: any, text: string): boolean {
-  try {
-    font.encodeText(text);
-    return true;
-  } catch {
-    return false;
+/**
+ * WinAnsi (the only encoding standard pdf-lib built-in fonts support)
+ * covers exactly code points 0x0000–0x00FF. Any character above that
+ * — Devanagari, CJK, Emoji, etc. — must be rendered via Canvas fallback.
+ */
+function hasNonWinAnsiChars(text: string): boolean {
+  for (const ch of text) {
+    if ((ch.codePointAt(0) ?? 0) > 0xff) return true;
   }
+  return false;
 }
 
 async function renderTextLineAsImage(
@@ -248,24 +251,7 @@ async function drawElement(
           const clampedX = Math.max(0, Math.min(pdfW - 4, pdfX));
           const clampedY = Math.max(0, Math.min(pdfH - fontSize, currentY));
 
-          if (canEncodeWithFont(font, line)) {
-            try {
-              pdfPage.drawText(line, { x: clampedX, y: clampedY, size: fontSize, font, color });
-            } catch {
-              await renderTextLineAsImage(
-                pdfDoc,
-                pdfPage,
-                line,
-                clampedX,
-                clampedY,
-                fontSize,
-                el.fontFamily,
-                el.color,
-                el.isBold,
-                el.isItalic
-              );
-            }
-          } else {
+          if (hasNonWinAnsiChars(line)) {
             await renderTextLineAsImage(
               pdfDoc,
               pdfPage,
@@ -278,6 +264,8 @@ async function drawElement(
               el.isBold,
               el.isItalic
             );
+          } else {
+            pdfPage.drawText(line, { x: clampedX, y: clampedY, size: fontSize, font, color });
           }
         }
         currentY -= lineHeight;
