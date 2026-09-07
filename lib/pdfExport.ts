@@ -271,7 +271,24 @@ async function drawElement(
               el.isItalic
             );
           } else {
-            pdfPage.drawText(line, { x: clampedX, y: clampedY, size: fontSize, font, color });
+            try {
+              pdfPage.drawText(line, { x: clampedX, y: clampedY, size: fontSize, font, color });
+            } catch {
+              // Last-resort: some chars (Private Use Area, special symbols) slip
+              // past the WinAnsi codepoint check — render via canvas instead
+              await renderTextLineAsImage(
+                pdfDoc,
+                pdfPage,
+                line,
+                clampedX,
+                clampedY,
+                fontSize,
+                el.fontFamily,
+                el.color,
+                el.isBold,
+                el.isItalic
+              );
+            }
           }
         }
         currentY -= lineHeight;
