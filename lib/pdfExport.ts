@@ -215,14 +215,16 @@ async function drawElement(
     case "text": {
       if (!el.text?.trim()) return;
 
-      const font = getFont(el.fontFamily, el.isBold, el.isItalic);
-      const fontSize = Math.max(4, sy(el.fontSize));
-      const color = hexToRgb(el.color);
+      // ── Original PDF text: only act if user modified it ──────────────────
+      // Unmodified originals are already rendered correctly by the underlying
+      // PDF with the proper Unicode fonts — re-drawing them through WinAnsi
+      // standard fonts would corrupt non-Latin scripts (Devanagari, CJK, etc.).
+      if (el.isOriginalPdfText) {
+        // If unchanged, nothing to do — leave the original PDF text as-is
+        if (el.text === el.originalText) return;
 
-      // Erase original text area if this is a modified original element
-      if (el.isOriginalPdfText && el.originalPosition && el.originalSize) {
-        // Only whiteout if text was changed
-        if (el.text !== el.originalText) {
+        // Text was changed: whiteout the original position first
+        if (el.originalPosition && el.originalSize) {
           const ox = sx(el.originalPosition.x);
           const ow = sx(el.originalSize.width) + 2;
           const oh = sy(el.originalSize.height) + 2;
@@ -238,6 +240,10 @@ async function drawElement(
           });
         }
       }
+
+      const font = getFont(el.fontFamily, el.isBold, el.isItalic);
+      const fontSize = Math.max(4, sy(el.fontSize));
+      const color = hexToRgb(el.color);
 
       const pdfX = sx(el.position.x);
       const lines = el.text.split("\n");
