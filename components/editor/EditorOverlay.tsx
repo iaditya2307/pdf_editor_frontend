@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useEditorStore } from "@/store/editorStore";
 import { Position } from "@/types/editor";
+import { generateId } from "@/lib/uuid";
 import EditorElementBox from "@/components/editor/EditorElementBox";
 
 interface EditorOverlayProps {
@@ -81,7 +82,7 @@ export default function EditorOverlay({ pageNumber, width, height }: EditorOverl
 
     if (activeTool === "text") {
       // Text tool: place a new text box
-      const id = crypto.randomUUID();
+      const id = generateId();
       addElement({
         id,
         type: "text",
@@ -146,7 +147,7 @@ export default function EditorOverlay({ pageNumber, width, height }: EditorOverl
     rafRef.current = 0;
     setIsDrawing(false);
 
-    const id = crypto.randomUUID();
+    const id = generateId();
 
     if (activeTool === "draw") {
       const pts = currentPointsRef.current;

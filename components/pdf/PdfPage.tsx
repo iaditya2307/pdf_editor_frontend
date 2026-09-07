@@ -5,6 +5,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import { useEditorStore } from "@/store/editorStore";
 import { EditorElement } from "@/types/editor";
 import EditorOverlay from "@/components/editor/EditorOverlay";
+import { generateId } from "@/lib/uuid";
 
 interface PdfPageProps {
   pdf: pdfjsLib.PDFDocumentProxy;
@@ -131,7 +132,7 @@ export default function PdfPage({
           const topY = screenY - height;
 
           extracted.push({
-            id: crypto.randomUUID(),
+            id: generateId(),
             type: "text",
             page: pageNumber,
             position: { x: Math.max(0, Math.round(screenX)), y: Math.max(0, Math.round(topY)) },

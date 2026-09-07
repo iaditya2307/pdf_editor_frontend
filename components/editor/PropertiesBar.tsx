@@ -1,6 +1,7 @@
 "use client";
 
 import { useEditorStore } from "@/store/editorStore";
+import { generateId } from "@/lib/uuid";
 import {
   Type,
   Palette,
@@ -62,7 +63,7 @@ export default function PropertiesBar() {
 
       const img = new Image();
       img.onload = () => {
-        const id = crypto.randomUUID();
+        const id = generateId();
         const maxWidth = 200;
         const scale = maxWidth / img.width;
         addElement({
